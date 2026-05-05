@@ -6,10 +6,11 @@ from datetime import datetime
 
 TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
+CHANNEL_USERNAME = 'topiluxarp'  # Канал для обязательной подписки
+CHANNEL_LINK = 'https://t.me/topiluxarp'
 
 bot = telebot.TeleBot(TOKEN)
 
-# Создание базы данных
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
@@ -47,6 +48,12 @@ def init_db():
         )
     ''')
     
+    # Добавляем основной канал если его нет
+    cursor.execute('SELECT COUNT(*) FROM channels WHERE channel_username = ?', (CHANNEL_USERNAME,))
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('INSERT INTO channels (channel_username, channel_link, added_date) VALUES (?, ?, ?)',
+                      (CHANNEL_USERNAME, CHANNEL_LINK, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    
     conn.commit()
     conn.close()
 
@@ -82,14 +89,8 @@ def get_main_menu_keyboard(user_id):
     markup.add(btn_cheats, btn_settings)
     return markup
 
-def get_versions_keyboard(user_id):
+def get_versions_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
     
     versions = [
         ("1.8.8", "ver_1.8.8"),
@@ -104,75 +105,58 @@ def get_versions_keyboard(user_id):
     
     return markup
 
-def get_settings_keyboard(user_id):
+def get_settings_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    
-    lang = result[0] if result else 'ru'
-    
-    if lang == 'ru':
-        btn_change_lang = types.InlineKeyboardButton("🌐 Сменить язык", callback_data="change_lang")
-        btn_channel = types.InlineKeyboardButton("📢 Наш канал", url="https://t.me/your_channel")
-    elif lang == 'en':
-        btn_change_lang = types.InlineKeyboardButton("🌐 Change Language", callback_data="change_lang")
-        btn_channel = types.InlineKeyboardButton("📢 Our Channel", url="https://t.me/your_channel")
-    else:
-        btn_change_lang = types.InlineKeyboardButton("🌐 Змінити мову", callback_data="change_lang")
-        btn_channel = types.InlineKeyboardButton("📢 Наш канал", url="https://t.me/your_channel")
-    
+    btn_change_lang = types.InlineKeyboardButton("🌐 Сменить язык / Change Language", callback_data="change_lang")
+    btn_channel = types.InlineKeyboardButton("📢 Наш канал", url=CHANNEL_LINK)
     markup.add(btn_change_lang, btn_channel)
     return markup
 
 def check_subscription(user_id):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT channel_username FROM channels')
-    channels = cursor.fetchall()
-    conn.close()
-    
-    if not channels:
-        return True
-    
-    for channel in channels:
+    """ТОЧНАЯ проверка подписки на канал"""
+    try:
+        # Используем get_chat_member для точной проверки
+        member = bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
+        
+        # Проверяем все возможные статусы
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+        elif member.status in ['left', 'kicked', 'restricted']:
+            return False
+        else:
+            return False
+            
+    except Exception as e:
+        print(f"Ошибка проверки подписки: {e}")
+        # Если бот не может проверить (например не админ канала), 
+        # проверяем через другой метод
         try:
-            member = bot.get_chat_member(f"@{channel[0]}", user_id)
-            if member.status in ['left', 'kicked']:
-                return False
+            chat = bot.get_chat(f"@{CHANNEL_USERNAME}")
+            member_count = bot.get_chat_members_count(f"@{CHANNEL_USERNAME}")
+            # Если канал существует, пробуем еще раз
+            member = bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
+            return member.status in ['member', 'administrator', 'creator']
         except:
-            continue
-    
-    return True
+            return False
 
-def get_subscription_markup(user_id):
+def get_subscription_markup():
+    """Создает клавиатуру с кнопкой подписки и проверки"""
     markup = types.InlineKeyboardMarkup(row_width=1)
     
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT channel_username, channel_link FROM channels')
-    channels = cursor.fetchall()
-    cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-    lang_result = cursor.fetchone()
-    conn.close()
+    # Кнопка для подписки на канал
+    btn_subscribe = types.InlineKeyboardButton(
+        "📢 ПОДПИСАТЬСЯ НА КАНАЛ", 
+        url=CHANNEL_LINK
+    )
+    markup.add(btn_subscribe)
     
-    lang = lang_result[0] if lang_result else 'ru'
-    
-    for channel in channels:
-        btn = types.InlineKeyboardButton(f"📢 Подписаться на {channel[0]}", url=channel[1])
-        markup.add(btn)
-    
-    if lang == 'ru':
-        btn_check = types.InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")
-    elif lang == 'en':
-        btn_check = types.InlineKeyboardButton("✅ Check Subscription", callback_data="check_sub")
-    else:
-        btn_check = types.InlineKeyboardButton("✅ Перевірити підписку", callback_data="check_sub")
-    
+    # Кнопка проверки подписки
+    btn_check = types.InlineKeyboardButton(
+        "✅ Я ПОДПИСАЛСЯ! Проверить", 
+        callback_data="check_sub"
+    )
     markup.add(btn_check)
+    
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -191,11 +175,24 @@ def start_command(message):
     
     conn.close()
     
-    bot.send_message(
-        user_id,
-        "🇷🇺 Выберите язык / 🇬🇧 Choose language / 🇺🇦 Виберіть мову:",
-        reply_markup=get_language_keyboard()
-    )
+    # Сначала проверяем подписку
+    if check_subscription(user_id):
+        bot.send_message(
+            user_id,
+            "🇷🇺 Выберите язык / 🇬🇧 Choose language / 🇺🇦 Виберіть мову:",
+            reply_markup=get_language_keyboard()
+        )
+    else:
+        bot.send_message(
+            user_id,
+            "⚠️ *ОБЯЗАТЕЛЬНАЯ ПОДПИСКА!*\n\n"
+            "📢 Чтобы использовать бота, вы ДОЛЖНЫ подписаться на наш канал!\n\n"
+            "1️⃣ Нажмите кнопку «ПОДПИСАТЬСЯ НА КАНАЛ»\n"
+            "2️⃣ Подпишитесь на канал\n"
+            "3️⃣ Вернитесь в бот и нажмите «Я ПОДПИСАЛСЯ!»",
+            parse_mode="Markdown",
+            reply_markup=get_subscription_markup()
+        )
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
@@ -203,6 +200,15 @@ def admin_command(message):
     
     if user_id != ADMIN_ID:
         bot.send_message(user_id, "⛔ У вас нет доступа к админ-панели!")
+        return
+    
+    # Сначала проверяем подписку админа
+    if not check_subscription(user_id):
+        bot.send_message(
+            user_id,
+            "⚠️ Вы должны быть подписаны на канал чтобы использовать админ-панель!",
+            reply_markup=get_subscription_markup()
+        )
         return
     
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -221,6 +227,15 @@ def handle_callback(call):
     user_id = call.message.chat.id
     data = call.data
     
+    # Проверка подписки при ЛЮБОМ действии
+    if not check_subscription(user_id) and data not in ['check_sub', 'lang_ru', 'lang_en', 'lang_ua']:
+        bot.answer_callback_query(
+            call.id,
+            "❌ Вы не подписаны на канал! Подпишитесь и попробуйте снова.",
+            show_alert=True
+        )
+        return
+    
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
@@ -236,27 +251,18 @@ def handle_callback(call):
         conn.commit()
         conn.close()
         
-        if not check_subscription(user_id):
-            if selected_lang == 'ru':
-                msg = "📢 Для использования бота подпишитесь на канал:"
-            elif selected_lang == 'en':
-                msg = "📢 To use the bot, subscribe to the channel:"
-            else:
-                msg = "📢 Для використання бота підпишіться на канал:"
-            
-            bot.edit_message_text(msg, user_id, call.message.message_id, reply_markup=get_subscription_markup(user_id))
+        if selected_lang == 'ru':
+            msg = "✅ Язык установлен: Русский\nИспользуйте меню для навигации:"
+        elif selected_lang == 'en':
+            msg = "✅ Language set: English\nUse the menu to navigate:"
         else:
-            if selected_lang == 'ru':
-                msg = "✅ Язык установлен: Русский\nИспользуйте меню для навигации:"
-            elif selected_lang == 'en':
-                msg = "✅ Language set: English\nUse the menu to navigate:"
-            else:
-                msg = "✅ Мову встановлено: Українська\nВикористовуйте меню для навігації:"
-            
-            bot.edit_message_text(msg, user_id, call.message.message_id)
-            bot.send_message(user_id, "👇 Меню:", reply_markup=get_main_menu_keyboard(user_id))
+            msg = "✅ Мову встановлено: Українська\nВикористовуйте меню для навігації:"
+        
+        bot.edit_message_text(msg, user_id, call.message.message_id)
+        bot.send_message(user_id, "👇 Меню:", reply_markup=get_main_menu_keyboard(user_id))
     
     elif data == 'check_sub':
+        # ДВОЙНАЯ проверка подписки
         if check_subscription(user_id):
             conn = sqlite3.connect('bot_database.db')
             cursor = conn.cursor()
@@ -274,18 +280,42 @@ def handle_callback(call):
                 msg = "✅ Підписку підтверджено! Ласкаво просимо!"
             
             bot.edit_message_text(msg, user_id, call.message.message_id)
-            bot.send_message(user_id, "👇 Меню:", reply_markup=get_main_menu_keyboard(user_id))
+            bot.send_message(
+                user_id,
+                "🇷🇺 Выберите язык / 🇬🇧 Choose language / 🇺🇦 Виберіть мову:",
+                reply_markup=get_language_keyboard()
+            )
         else:
-            if lang == 'ru':
-                msg = "❌ Вы не подписались на все каналы!"
-            elif lang == 'en':
-                msg = "❌ You haven't subscribed to all channels!"
-            else:
-                msg = "❌ Ви не підписалися на всі канали!"
+            # Если не подписан - даем инструкцию
+            bot.answer_callback_query(
+                call.id,
+                "❌ ВЫ НЕ ПОДПИСАНЫ НА КАНАЛ!\n\n"
+                "1. Нажмите 'ПОДПИСАТЬСЯ НА КАНАЛ'\n"
+                "2. Нажмите 'Подписаться' в Telegram\n"
+                "3. Вернитесь и нажмите 'Я ПОДПИСАЛСЯ!'",
+                show_alert=True
+            )
             
-            bot.answer_callback_query(call.id, msg, show_alert=True)
+            # Обновляем сообщение с инструкцией
+            bot.edit_message_text(
+                "⚠️ *ПОДПИСКА НЕ ПОДТВЕРЖДЕНА!*\n\n"
+                "📢 Вы все еще не подписаны на канал!\n\n"
+                "1️⃣ Нажмите кнопку ниже 👇\n"
+                "2️⃣ Подпишитесь на канал\n"
+                "3️⃣ Вернитесь и нажмите «Я ПОДПИСАЛСЯ!»\n\n"
+                "⚠️ Без подписки бот не работает!",
+                user_id,
+                call.message.message_id,
+                parse_mode="Markdown",
+                reply_markup=get_subscription_markup()
+            )
     
     elif data.startswith('ver_'):
+        # Дополнительная проверка подписки перед показом читов
+        if not check_subscription(user_id):
+            bot.answer_callback_query(call.id, "❌ Подпишитесь на канал!", show_alert=True)
+            return
+            
         version = data.replace('ver_', '')
         
         conn = sqlite3.connect('bot_database.db')
@@ -389,6 +419,9 @@ def handle_callback(call):
         cursor.execute('SELECT COUNT(*) FROM cheats')
         total_cheats = cursor.fetchone()[0]
         
+        cursor.execute('SELECT COUNT(*) FROM users WHERE subscribed = 1')
+        subscribed_users = cursor.fetchone()[0]
+        
         cursor.execute('SELECT COUNT(*) FROM users WHERE language = "ru"')
         ru_users = cursor.fetchone()[0]
         
@@ -403,6 +436,10 @@ def handle_callback(call):
         msg = f"""📊 Статистика бота:
 
 👥 Всего пользователей: {total_users}
+  - ✅ Подписаны: {subscribed_users}
+  - ❌ Не подписаны: {total_users - subscribed_users}
+  
+🌐 По языкам:
   - 🇷🇺 Русский: {ru_users}
   - 🇬🇧 English: {en_users}
   - 🇺🇦 Украинский: {ua_users}
@@ -416,6 +453,20 @@ def handle_text(message):
     user_id = message.from_user.id
     text = message.text
     
+    # Проверка подписки при ЛЮБОМ действии
+    if not check_subscription(user_id):
+        bot.send_message(
+            user_id,
+            "⚠️ *ДОСТУП ЗАПРЕЩЕН!*\n\n"
+            "📢 Вы не подписаны на канал @topiluxarp\n\n"
+            "1️⃣ Нажмите кнопку «ПОДПИСАТЬСЯ НА КАНАЛ»\n"
+            "2️⃣ Подпишитесь\n"
+            "3️⃣ Нажмите «Я ПОДПИСАЛСЯ!»",
+            parse_mode="Markdown",
+            reply_markup=get_subscription_markup()
+        )
+        return
+    
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
@@ -424,24 +475,14 @@ def handle_text(message):
     conn.close()
     
     if text in ["📋 Список читов", "📋 Cheats List", "📋 Список читів"]:
-        if not check_subscription(user_id):
-            if lang == 'ru':
-                msg = "📢 Для использования бота подпишитесь на канал:"
-            elif lang == 'en':
-                msg = "📢 To use the bot, subscribe to the channel:"
-            else:
-                msg = "📢 Для використання бота підпишіться на канал:"
-            
-            bot.send_message(user_id, msg, reply_markup=get_subscription_markup(user_id))
+        if lang == 'ru':
+            msg = "🎮 Выберите версию Minecraft:"
+        elif lang == 'en':
+            msg = "🎮 Choose Minecraft version:"
         else:
-            if lang == 'ru':
-                msg = "🎮 Выберите версию Minecraft:"
-            elif lang == 'en':
-                msg = "🎮 Choose Minecraft version:"
-            else:
-                msg = "🎮 Виберіть версію Minecraft:"
-            
-            bot.send_message(user_id, msg, reply_markup=get_versions_keyboard(user_id))
+            msg = "🎮 Виберіть версію Minecraft:"
+        
+        bot.send_message(user_id, msg, reply_markup=get_versions_keyboard())
     
     elif text in ["⚙️ Настройки", "⚙️ Settings", "⚙️ Налаштування"]:
         if lang == 'ru':
@@ -451,7 +492,7 @@ def handle_text(message):
         else:
             msg = "⚙️ Налаштування бота:"
         
-        bot.send_message(user_id, msg, reply_markup=get_settings_keyboard(user_id))
+        bot.send_message(user_id, msg, reply_markup=get_settings_keyboard())
 
 def process_add_cheat(message):
     user_id = message.from_user.id
