@@ -1,3 +1,11 @@
-pyTelegramBotAPI
-psutil
+telethon==1.36.0
+python-telegram-bot[job-queue]==21.6
+aiohttp==3.9.5
+google-genai
+groq
+cerebras-cloud-sdk
+openai
+apscheduler==3.10.4
+pytz
 Pillow
+requests
